@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        :root { --blue: #007aff; --red: #ff3b30; --bg: #f5f5f7; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); padding: 30px; margin: 0; }
+        .card { background: white; border-radius: 20px; padding: 30px; box-shadow: 0 10px 40px rgba(0,0,0,0.05); max-width: 1300px; margin: auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 20px; margin-bottom: 20px; }
+        .stats { background: #e8f2ff; color: var(--blue); padding: 10px 20px; border-radius: 12px; font-weight: 700; }
+        
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        tr.item-row { border-bottom: 1px solid #f2f2f2; }
+        td { padding: 16px; vertical-align: middle; word-wrap: break-word; }
+        .folder-header { background: #fafafa; font-size: 11px; font-weight: 800; color: #bbb; text-transform: uppercase; letter-spacing: 1px; }
+
+        .btn-group { display: flex; gap: 8px; margin-top: 10px; }
+        .btn { border: none; padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 11px; font-weight: 600; transition: 0.1s; }
+        .btn-del { background: var(--red); color: white; }
+        .btn-rev { background: #eee; color: #333; }
+        
+        #preview-overlay {
+            display: none; position: fixed; width: 450px; height: 320px; background: #000;
+            border-radius: 16px; box-shadow: 0 30px 60px rgba(0,0,0,0.5); z-index: 9999;
+            pointer-events: none; overflow: hidden; border: 1px solid #333;
+        }
+        #preview-overlay img { width: 100%; height: 100%; object-fit: contain; }
+        .confirm-overlay { display: none; position: absolute; background: rgba(0,0,0,0.9); color: white; inset: 0; align-items: center; justify-content: center; gap: 10px; z-index: 5; border-radius: 8px; backdrop-filter: blur(4px); }
+    </style>
+</head>
+<body>
+    <div id="preview-overlay"></div>
+    <div class="card">
+        <div class="header">
+            <div>
+                <h1>Mac Intelligence Cleanup</h1>
+                <p id="status" style="color:#86868b">🔍 Scanning...</p>
+            </div>
+            <div class="stats">Saved: <span id="saved-amt">0</span> MB</div>
+        </div>
+        <table><tbody id="table-body"></tbody></table>
+    </div>
+
+    <script>
+        async function poll() {
+            try {
+                const res = await fetch('/poll');
+                const data = await res.json();
+                document.getElementById('saved-amt').innerText = data.saved;
+                if(data.files.length > 0) document.getElementById('status').innerText = `✅ Found ${data.files.length} items`;
+                render(data.files);
+            } catch (e) { console.error(e); }
+        }
+
+        function render(files) {
+            const body = document.getElementById('table-body');
+            const grouped = {};
+            files.forEach(f => { if (!grouped[f.folder]) grouped[f.folder] = []; grouped[f.folder].push(f); });
+
+            let html = '';
+            Object.keys(grouped).forEach(folder => {
+                html += `<tr class="folder-header"><td colspan="3">📁 ${folder}</td></tr>`;
+                grouped[folder].sort((a,b) => b.size - a.size).forEach((item, index) => {
+                    const rowId = "row-" + btoa(unescape(encodeURIComponent(item.path))).replace(/=/g, '').substring(0,10) + index;
+                    html += `
+                    <tr class="item-row" id="${rowId}">
+                        <td style="width:35%"><b>${item.name}</b><div style="font-size:10px; color:#999">${item.path}</div></td>
+                        <td style="width:10%; font-weight:700">${item.size} MB</td>
+                        <td style="position:relative" onmouseenter="showPrev('${item.path.replace(/'/g, "\\'")}')" onmouseleave="hidePrev()">
+                            <div style="color:var(--red); font-style:italic; font-weight:500">${item.reason}</div>
+                            <div class="btn-group">
+                                <button class="btn btn-rev" onclick="reveal('${item.path.replace(/'/g, "\\'")}')">Reveal</button>
+                                <button class="btn btn-del" onclick="document.getElementById('conf-${rowId}').style.display='flex'">Delete</button>
+                            </div>
+                            <div class="confirm-overlay" id="conf-${rowId}">
+                                <span>Permanent?</span>
+                                <button class="btn btn-del" onclick="doDel('${item.path.replace(/'/g, "\\'")}', ${item.size}, '${rowId}')">Yes</button>
+                                <button class="btn btn-rev" onclick="this.parentElement.style.display='none'">No</button>
+                            </div>
+                        </td>
+                    </tr>`;
+                });
+            });
+            body.innerHTML = html;
+        }
+
+        function showPrev(path) {
+            const ext = path.split('.').pop().toLowerCase();
+            const overlay = document.getElementById('preview-overlay');
+            const ok = ['jpg','jpeg','png','webp','heic','cr3','cr2','nef','arw','dng','orf','raf','pdf','txt'];
+            if (!ok.includes(ext)) return;
+            overlay.style.display = 'block';
+            
+            // Encode the path for the URL
+            overlay.innerHTML = `<img src="/preview?path=${encodeURIComponent(path)}">`;
+            
+            document.onmousemove = (e) => {
+                overlay.style.left = (e.clientX - 480) + 'px';
+                overlay.style.top = (e.clientY - 160) + 'px';
+            };
+        }
+        function hidePrev() { document.getElementById('preview-overlay').style.display = 'none'; }
+
+        async function doDel(path, size, id) {
+            const res = await fetch('/delete', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({path: path, size: size})
+            });
+            if (res.ok) { document.getElementById(id).style.display = 'none'; }
+        }
+
+        function reveal(path) {
+            fetch('/reveal', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({path: path})
+            });
+        }
+
+        setInterval(poll, 3000);
+        poll();
+    </script>
+</body>
+</html>

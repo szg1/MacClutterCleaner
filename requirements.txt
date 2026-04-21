@@ -1,0 +1,6 @@
+python-dotenv
+google-genai
+flask
+flask_cors
+rawpy
+imageio
